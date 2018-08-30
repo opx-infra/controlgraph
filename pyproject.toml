@@ -13,6 +13,7 @@ description-file="README.md"
 requires = [
     "dbp (>= 0.3.3)",
     "networkx",
+    "pydot",
 ]
 
 [tool.flit.scripts]

@@ -1,6 +1,6 @@
 """Generate build order graph from directory of debian packaging repositories"""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 import argparse
 import logging
@@ -9,7 +9,7 @@ import shutil
 import sys
 
 from pathlib import Path
-from subprocess import run, PIPE, DEVNULL
+from subprocess import Popen, run, PIPE, DEVNULL, STDOUT
 from typing import Dict, List, Tuple
 
 import dbp
@@ -19,11 +19,9 @@ L = logging.getLogger("dbp")
 L.addHandler(logging.NullHandler())
 
 
-def docker_capture_output(
-    image: str, dist: str, cmd: List[str]
-) -> Tuple[int, str, str]:
+def docker_exec_command(cmd: List[str]) -> List[str]:
     """Returns exit code, stdout, and stderr"""
-    cmd = [
+    return [
         "docker",
         "exec",
         "-it",
@@ -36,11 +34,6 @@ def docker_capture_output(
         "-c",
         " ".join(cmd),
     ]
-
-    L.debug("Running {}".format(" ".join(cmd)))
-    proc = run(cmd, stdout=PIPE, stderr=PIPE)
-
-    return proc.returncode, proc.stdout.decode("utf8"), proc.stderr.decode("utf8")
 
 
 def get_source_map(dirs: List[Path]) -> Dict[str, str]:
@@ -57,7 +50,7 @@ def get_source_map(dirs: List[Path]) -> Dict[str, str]:
     return deps
 
 
-def graph(dirs: List[Path]):
+def graph(dirs: List[Path], linear=True):
     """Prints linear build order. If dpkg-checkbuilddeps is not available, a container
     started with dbp.docker_run must be already running.
     """
@@ -69,36 +62,37 @@ def graph(dirs: List[Path]):
             L.info("Directory {} is missing a debian/control file".format(p.stem))
 
     deps = {v.stem: [] for v in valids}
-    deps_map = get_source_map(valids)
 
+    # time to collect all unmet build dependencies in parallel
+    commands = {}
     for k, v in deps.items():
-        # check for docker for dpkg-checkbuilddeps
         if shutil.which("dpkg-checkbuilddeps") is None:
-            rc, out, _ = docker_capture_output(
-                "opxhub/gbp",
-                "stretch",
-                ["dpkg-checkbuilddeps", "{}/debian/control".format(k)],
+            commands[k] = docker_exec_command(
+                ["dpkg-checkbuilddeps", "{}/debian/control".format(k)]
             )
         else:
-            proc = run(
-                ["dpkg-checkbuilddeps", "{}/debian/control".format(k)],
-                stdout=PIPE,
-                stderr=PIPE,
-            )
-            rc = proc.returncode
-            # not a mistake, dpkg-checkbuilddeps outputs to stderr
-            out = proc.stderr.decode("utf8")
+            commands[k] = ["dpkg-checkbuilddeps", "{}/debian/control".format(k)]
 
-        if rc == 1:
-            versioned_deps = out.replace(
-                "\x1b[1mdpkg-checkbuilddeps: \x1b[0m\x1b[1;31merror\x1b[0m: Unmet build dependencies:",
-                "",
-            ).strip()
-            build_deps = re.sub(r" \([^\)]*\)", "", versioned_deps).split(" ")
-            L.debug("Checking {} build deps {}".format(k, build_deps))
-            for build_dep in build_deps:
-                if build_dep in deps_map:
-                    v.append(deps_map[build_dep])
+    processes = {
+        repo: Popen(cmd, stdout=PIPE, stderr=STDOUT, universal_newlines=True)
+        for repo, cmd in commands.items()
+    }
+
+    deps_map = get_source_map(valids)
+
+    for repo, proc in processes.items():
+        proc.wait()
+        # process returned build dependencies
+        if proc.returncode == 1:
+            for line in proc.stdout:
+                versioned_deps = line.replace(
+                    "dpkg-checkbuilddeps: error: Unmet build dependencies:", ""
+                ).strip()
+                build_deps = re.sub(r" \([^\)]*\)", "", versioned_deps).split(" ")
+                L.debug("Checking {} build deps {}".format(repo, build_deps))
+                for build_dep in build_deps:
+                    if build_dep in deps_map:
+                        deps[repo].append(deps_map[build_dep])
 
     graph = nx.DiGraph()
     for k, v in deps.items():
@@ -107,7 +101,10 @@ def graph(dirs: List[Path]):
         for dep in v:
             graph.add_edge(k, dep)
 
-    print(" ".join(nx.dfs_postorder_nodes(graph)))
+    if linear:
+        print(" ".join(nx.dfs_postorder_nodes(graph)))
+    else:
+        nx.nx_pydot.write_dot(graph, sys.stdout)
 
 
 def main() -> int:
@@ -124,6 +121,22 @@ def main() -> int:
     parser.add_argument(
         "directories", type=Path, nargs="*", help="directories to graph"
     )
+    group_graph_type = parser.add_mutually_exclusive_group()
+    group_graph_type.add_argument(
+        "--linear",
+        "-l",
+        dest="linear",
+        action="store_true",
+        default="true",
+        help="return linear list of build dependencies",
+    )
+    group_graph_type.add_argument(
+        "--graph",
+        "-g",
+        dest="linear",
+        action="store_false",
+        help="return dot graph of build dependencies",
+    )
     args = parser.parse_args()
 
     if args.version:
@@ -137,8 +150,6 @@ def main() -> int:
 
     if len(args.directories) == 0:
         args.directories = [p for p in Path.cwd().iterdir() if p.is_dir()]
-
-    L.debug("args: {}".format(args))
 
     if shutil.which("dpkg-checkbuilddeps") is None:
         # Using Docker, time to start container
@@ -154,7 +165,7 @@ def main() -> int:
                 L.error("Could not start stopped container")
                 return rc
 
-    graph(args.directories)
+    graph(args.directories, args.linear)
 
     if args.rm:
         dbp.remove_container()
