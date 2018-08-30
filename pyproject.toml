@@ -11,9 +11,9 @@ classifiers = ["License :: OSI Approved :: MIT License"]
 requires-python = ">=3.5,<4"
 description-file="README.md"
 requires = [
-    "dbp (>= 0.3.3)",
     "networkx",
     "pydot",
+    "python-debian",
 ]
 
 [tool.flit.scripts]
