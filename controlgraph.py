@@ -1,6 +1,6 @@
 """Generate build order graph from directory of debian packaging repositories"""
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 
 import argparse
 import logging
@@ -23,23 +23,6 @@ def docker_capture_output(
     image: str, dist: str, cmd: List[str]
 ) -> Tuple[int, str, str]:
     """Returns exit code, stdout, and stderr"""
-    rc = 0
-    remove = True
-
-    if dbp.container_exists():
-        remove = False
-    else:
-        rc = dbp.docker_run(image, dist, "", dev=False)
-        if rc != 0:
-            L.error("Could not run container")
-            return rc, "", "Could not run container"
-
-    if not dbp.container_running(dist):
-        rc = dbp.docker_start(dist)
-        if rc != 0:
-            L.error("Could not start stopped container")
-            return rc, "", "Could not start stopped container"
-
     cmd = [
         "docker",
         "exec",
@@ -56,6 +39,7 @@ def docker_capture_output(
 
     L.debug("Running {}".format(" ".join(cmd)))
     proc = run(cmd, stdout=PIPE, stderr=PIPE)
+
     return proc.returncode, proc.stdout.decode("utf8"), proc.stderr.decode("utf8")
 
 
@@ -74,6 +58,9 @@ def get_source_map(dirs: List[Path]) -> Dict[str, str]:
 
 
 def graph(dirs: List[Path]):
+    """Prints linear build order. If dpkg-checkbuilddeps is not available, a container
+    started with dbp.docker_run must be already running.
+    """
     valids = []
     for p in dirs:
         if Path(p / "debian/control").is_file():
@@ -83,6 +70,7 @@ def graph(dirs: List[Path]):
 
     deps = {v.stem: [] for v in valids}
     deps_map = get_source_map(valids)
+
     for k, v in deps.items():
         # check for docker for dpkg-checkbuilddeps
         if shutil.which("dpkg-checkbuilddeps") is None:
@@ -92,7 +80,11 @@ def graph(dirs: List[Path]):
                 ["dpkg-checkbuilddeps", "{}/debian/control".format(k)],
             )
         else:
-            proc = run(["dpkg-checkbuilddeps", "{}/debian/control".format(k)], stdout=PIPE, stderr=PIPE)
+            proc = run(
+                ["dpkg-checkbuilddeps", "{}/debian/control".format(k)],
+                stdout=PIPE,
+                stderr=PIPE,
+            )
             rc = proc.returncode
             # not a mistake, dpkg-checkbuilddeps outputs to stderr
             out = proc.stderr.decode("utf8")
@@ -127,6 +119,9 @@ def main() -> int:
         "--verbose", "-v", help="-v for info, -vv for debug", action="count", default=0
     )
     parser.add_argument(
+        "--rm", action="store_true", help="remove container when finished"
+    )
+    parser.add_argument(
         "directories", type=Path, nargs="*", help="directories to graph"
     )
     args = parser.parse_args()
@@ -145,7 +140,24 @@ def main() -> int:
 
     L.debug("args: {}".format(args))
 
+    if shutil.which("dpkg-checkbuilddeps") is None:
+        # Using Docker, time to start container
+        if not dbp.container_exists():
+            rc = dbp.docker_run("opxhub/gbp", "stretch", "", dev=False)
+            if rc != 0:
+                L.error("Could not run container")
+                return rc
+
+        if not dbp.container_running("stretch"):
+            rc = dbp.docker_start("stretch")
+            if rc != 0:
+                L.error("Could not start stopped container")
+                return rc
+
     graph(args.directories)
+
+    if args.rm:
+        dbp.remove_container()
 
     return 0
 
