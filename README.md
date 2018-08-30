@@ -1,5 +1,8 @@
 # controlgraph
 
+[![PyPI version](https://badge.fury.io/py/controlgraph.svg)](https://pypi.org/project/controlgraph/)
+[![Build status](https://badge.buildkite.com/81c4e486b5f9ff5d3bf3f3da820201cefad4965207f4e2a8c2.svg)](https://buildkite.com/opx/opx-infra-controlgraph)
+
 Given a directory of repositories with Debian packaging, return the proper build order.
 
 ## Installation
