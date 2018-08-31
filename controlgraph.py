@@ -1,6 +1,6 @@
 """Generate build order graph from directory of debian packaging repositories"""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 import argparse
 import logging
@@ -27,8 +27,8 @@ def parse_controlfile(path: Path) -> Dict[str, BinaryPackage]:
     source = ""
     build_deps = []
     pkgs = {}
-    with path.open() as f:
-        for src in deb822.Sources.iter_paragraphs(f):
+    with path.open() as control:
+        for src in deb822.Sources.iter_paragraphs(control):
             if "Source" in src:
                 source = src["Source"]
                 build_deps.extend(
@@ -38,7 +38,14 @@ def parse_controlfile(path: Path) -> Dict[str, BinaryPackage]:
                     ]
                 )
             elif "Package" in src:
-                pkgs[src["Package"]] = BinaryPackage(src["Package"], source, build_deps)
+                if source != "":
+                    pkgs[src["Package"]] = BinaryPackage(
+                        src["Package"], source, build_deps
+                    )
+                else:
+                    pkgs[src["Package"]] = BinaryPackage(
+                        src["Package"], src["Package"], build_deps
+                    )
     return pkgs
 
 
@@ -86,6 +93,21 @@ def main() -> int:
         "--verbose", "-v", help="-v for info, -vv for debug", action="count", default=0
     )
     parser.add_argument(
+        "--danglers-first",
+        action="store_true",
+        help="list all independent repositories first",
+    )
+    parser.add_argument(
+        "--danglers-only",
+        action="store_true",
+        help="only list independent repositories",
+    )
+    parser.add_argument(
+        "--no-danglers",
+        action="store_true",
+        help="drop all independent repositories from graph",
+    )
+    parser.add_argument(
         "directories", type=Path, nargs="*", help="directories to graph"
     )
     group_graph_type = parser.add_mutually_exclusive_group()
@@ -120,12 +142,21 @@ def main() -> int:
 
     # Get graph and print
     dep_graph = graph(args.directories)
-    if args.linear:
-        # Put all isolated nodes first in list
+    if args.no_danglers:
         isolates = list(nx.isolates(dep_graph))
         dep_graph.remove_nodes_from(isolates)
-        build_order = list(nx.dfs_postorder_nodes(dep_graph))
-        print(" ".join(isolates + build_order))
+
+    if args.linear:
+        if args.danglers_first:
+            # Put all isolated nodes first in list
+            isolates = list(nx.isolates(dep_graph))
+            dep_graph.remove_nodes_from(isolates)
+            build_order = list(nx.dfs_postorder_nodes(dep_graph))
+            print(" ".join(isolates + build_order))
+        elif args.danglers_only:
+            print(" ".join(list(nx.isolates(dep_graph))))
+        else:
+            print(" ".join(list(nx.dfs_postorder_nodes(dep_graph))))
     else:
         nx.nx_pydot.write_dot(dep_graph, sys.stdout)
 
