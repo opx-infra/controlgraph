@@ -1,6 +1,6 @@
 """Generate build order graph from directory of debian packaging repositories"""
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 import argparse
 import logging
@@ -108,23 +108,19 @@ def main() -> int:
         help="drop all independent repositories from graph",
     )
     parser.add_argument(
-        "directories", type=Path, nargs="*", help="directories to graph"
-    )
-    group_graph_type = parser.add_mutually_exclusive_group()
-    group_graph_type.add_argument(
-        "--linear",
-        "-l",
-        dest="linear",
-        action="store_true",
-        default="true",
-        help="return linear list of build dependencies",
-    )
-    group_graph_type.add_argument(
         "--graph",
         "-g",
-        dest="linear",
-        action="store_false",
+        action="store_true",
         help="return dot graph of build dependencies",
+    )
+    parser.add_argument(
+        "--reverse",
+        "-r",
+        action="store_true",
+        help="reverse output, only works with --graph, shows parallel build stream",
+    )
+    parser.add_argument(
+        "directories", type=Path, nargs="*", help="directories to graph"
     )
     args = parser.parse_args()
 
@@ -146,7 +142,11 @@ def main() -> int:
         isolates = list(nx.isolates(dep_graph))
         dep_graph.remove_nodes_from(isolates)
 
-    if args.linear:
+    if args.graph:
+        if args.reverse:
+            dep_graph = dep_graph.reverse()
+        nx.nx_pydot.write_dot(dep_graph, sys.stdout)
+    else:
         if args.danglers_first:
             # Put all isolated nodes first in list
             isolates = list(nx.isolates(dep_graph))
@@ -157,8 +157,6 @@ def main() -> int:
             print(" ".join(list(nx.isolates(dep_graph))))
         else:
             print(" ".join(list(nx.dfs_postorder_nodes(dep_graph))))
-    else:
-        nx.nx_pydot.write_dot(dep_graph, sys.stdout)
 
     return 0
 
