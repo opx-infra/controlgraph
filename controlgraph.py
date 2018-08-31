@@ -7,9 +7,9 @@ import logging
 import re
 import sys
 
+from collections import namedtuple
 from pathlib import Path
-from subprocess import Popen, run, PIPE, DEVNULL, STDOUT
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import networkx as nx
 
@@ -19,17 +19,11 @@ L = logging.getLogger("controlgraph")
 L.addHandler(logging.NullHandler())
 
 
-class BinaryPackage:
-    def __init__(self, name: str, source: str, build_deps: List[str]) -> None:
-        self.name = name
-        self.source = source
-        self.build_deps = build_deps
-
-    def __repr__(self) -> str:
-        return "BinaryPackage({})".format(self.__dict__)
+BinaryPackage = namedtuple("BinaryPackage", ["name", "source", "build_deps"])
 
 
 def parse_controlfile(path: Path) -> Dict[str, BinaryPackage]:
+    """Parse control file and return map of binary packages to BinaryPackages"""
     source = ""
     build_deps = []
     pkgs = {}
@@ -52,8 +46,8 @@ def graph(dirs: List[Path]) -> nx.DiGraph:
     """Prints linear or dot graph build order."""
     # Get dict matching binary packages to source packages/build deps
     pkgs = {}
-    for p in dirs:
-        controlfile = Path(p / "debian/control")
+    for path in dirs:
+        controlfile = Path(path / "debian/control")
         if not controlfile.exists():
             continue
         pkgs.update(parse_controlfile(controlfile))
@@ -72,17 +66,18 @@ def graph(dirs: List[Path]) -> nx.DiGraph:
         build_deps[repo] = src_deps
 
     # Create graph from build deps
-    graph = nx.DiGraph()
-    for k, v in build_deps.items():
-        graph.add_node(k)
-        graph.add_nodes_from(v)
-        for dep in v:
-            graph.add_edge(k, dep)
+    dep_graph = nx.DiGraph()
+    for src, deps in build_deps.items():
+        dep_graph.add_node(src)
+        dep_graph.add_nodes_from(deps)
+        for dep in deps:
+            dep_graph.add_edge(src, dep)
 
-    return graph
+    return dep_graph
 
 
 def main() -> int:
+    """Parse args, generate graph, and print it"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--version", "-V", action="store_true", help="print program version"
@@ -120,19 +115,19 @@ def main() -> int:
         format="[%(levelname)s] %(message)s", level=10 * (3 - min(args.verbose, 2))
     )
 
-    if len(args.directories) == 0:
+    if not args.directories:
         args.directories = [p for p in Path.cwd().iterdir() if p.is_dir()]
 
     # Get graph and print
-    g = graph(args.directories)
+    dep_graph = graph(args.directories)
     if args.linear:
         # Put all isolated nodes first in list
-        isolates = list(nx.isolates(g))
-        g.remove_nodes_from(isolates)
-        build_order = list(nx.dfs_postorder_nodes(g))
+        isolates = list(nx.isolates(dep_graph))
+        dep_graph.remove_nodes_from(isolates)
+        build_order = list(nx.dfs_postorder_nodes(dep_graph))
         print(" ".join(isolates + build_order))
     else:
-        nx.nx_pydot.write_dot(g, sys.stdout)
+        nx.nx_pydot.write_dot(dep_graph, sys.stdout)
 
     return 0
 
