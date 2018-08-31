@@ -5,7 +5,7 @@
 
 controlgraph is a directed graph which can be traversed to enable parallelized Debian package builds.
 
-From the available directories with valid Debian packaging, a graph with directories (representing source packages) for nodes and build dependencies for edges is produced. This can traversed with a depth-first search to build in dependency order.
+From the available directories with valid Debian packaging, a graph with directories (representing source packages) for nodes and build dependencies for edges is produced. The reverse of this graph can traversed with a breadth-first search to build in dependency order.
 
 `controlgraph` is a program which returns the controlgraph for a directory to build, in linear or dot format.
 
@@ -47,4 +47,5 @@ Pair it with [`dbp`](https://github.com/opx-infra/dbp) for easy full builds.
 
 ```bash
 $ dbp build $(controlgraph)
+$ controlgraph --graph --reverse | dbp build --parallel=8
 ```
