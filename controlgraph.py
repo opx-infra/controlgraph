@@ -23,39 +23,38 @@ BinaryPackage = namedtuple("BinaryPackage", ["name", "source", "build_deps", "di
 
 
 def parse_controlfile(path: Path) -> Dict[str, BinaryPackage]:
-    """Parse control file and return map of binary packages to BinaryPackages"""
+    """Parse directory containing debian/control"""
     source = ""
     build_deps = []
     pkgs = {}
     file = Path(path / "debian/control")
     with file.open() as control:
-        for src in deb822.Sources.iter_paragraphs(control):
-            if "Source" in src:
-                source = src["Source"]
+        for pg in deb822.Sources.iter_paragraphs(control):
+            if "Source" in pg:
+                source = pg["Source"]
                 build_deps.extend(
                     [
                         re.sub(r" \([^\)]*\)", "", s.strip()).strip()
-                        for s in src["Build-Depends"].split(",")
+                        for s in pg["Build-Depends"].split(",")
                     ]
                 )
-            elif "Package" in src:
+            elif "Package" in pg:
                 if source != "":
-                    pkgs[src["Package"]] = BinaryPackage(
-                        src["Package"], source, build_deps, path.stem
+                    pkgs[pg["Package"]] = BinaryPackage(
+                        pg["Package"], source, build_deps, path.stem
                     )
                 else:
-                    pkgs[src["Package"]] = BinaryPackage(
-                        src["Package"], src["Package"], build_deps, path.stem
+                    pkgs[pg["Package"]] = BinaryPackage(
+                        pg["Package"], pg["Package"], build_deps, path.stem
                     )
     return pkgs
 
 
 def parse_all_controlfiles(dirs: List[Path]) -> Dict[str, BinaryPackage]:
-    """Process all control files in a directory"""
+    """Process all repo/debian/control files in a directory"""
     pkgs = {}
     for path in dirs:
-        controlfile = Path(path / "debian/control")
-        if not controlfile.exists():
+        if not Path(path / "debian/control").exists():
             continue
         pkgs.update(parse_controlfile(path))
     return pkgs
@@ -63,15 +62,20 @@ def parse_all_controlfiles(dirs: List[Path]) -> Dict[str, BinaryPackage]:
 
 def graph(pkgs: Dict[str, BinaryPackage]) -> nx.DiGraph:
     """Builds graph of build dependencies"""
+    # To get build dependencies from a source package
     build_deps = {}
+    # To get the source package for a binary package
     src_pkgs = {}
+    # To get the directory for a source package
     directories = {}
+
+    # Build maps mentioned above
     for _, pkg in pkgs.items():
         build_deps[pkg.source] = pkg.build_deps
         src_pkgs[pkg.name] = pkg.source
         directories[pkg.source] = pkg.dir
 
-    # Convert binary build deps to source packages (if available locally)
+    # Convert binary build dependencies to local directories
     for src, d in directories.items():
         src_deps = []
         for dep in build_deps[src]:
@@ -79,7 +83,7 @@ def graph(pkgs: Dict[str, BinaryPackage]) -> nx.DiGraph:
                 src_deps.append(directories[src_pkgs[dep]])
         build_deps[src] = src_deps
 
-    # Create graph from build deps
+    # Create graph from build dependencies
     dep_graph = nx.DiGraph()
     for src, d in directories.items():
         dep_graph.add_node(d)
