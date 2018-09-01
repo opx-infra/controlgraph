@@ -1,6 +1,6 @@
 """Generate build order graph from directory of debian packaging repositories"""
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 import argparse
 import logging
@@ -19,7 +19,7 @@ L = logging.getLogger("controlgraph")
 L.addHandler(logging.NullHandler())
 
 
-BinaryPackage = namedtuple("BinaryPackage", ["name", "source", "build_deps"])
+BinaryPackage = namedtuple("BinaryPackage", ["name", "source", "build_deps", "dir"])
 
 
 def parse_controlfile(path: Path) -> Dict[str, BinaryPackage]:
@@ -27,7 +27,8 @@ def parse_controlfile(path: Path) -> Dict[str, BinaryPackage]:
     source = ""
     build_deps = []
     pkgs = {}
-    with path.open() as control:
+    file = Path(path / "debian/control")
+    with file.open() as control:
         for src in deb822.Sources.iter_paragraphs(control):
             if "Source" in src:
                 source = src["Source"]
@@ -40,45 +41,51 @@ def parse_controlfile(path: Path) -> Dict[str, BinaryPackage]:
             elif "Package" in src:
                 if source != "":
                     pkgs[src["Package"]] = BinaryPackage(
-                        src["Package"], source, build_deps
+                        src["Package"], source, build_deps, path.stem
                     )
                 else:
                     pkgs[src["Package"]] = BinaryPackage(
-                        src["Package"], src["Package"], build_deps
+                        src["Package"], src["Package"], build_deps, path.stem
                     )
     return pkgs
 
 
-def graph(dirs: List[Path]) -> nx.DiGraph:
-    """Prints linear or dot graph build order."""
-    # Get dict matching binary packages to source packages/build deps
+def parse_all_controlfiles(dirs: List[Path]) -> Dict[str, BinaryPackage]:
+    """Process all control files in a directory"""
     pkgs = {}
     for path in dirs:
         controlfile = Path(path / "debian/control")
         if not controlfile.exists():
             continue
-        pkgs.update(parse_controlfile(controlfile))
+        pkgs.update(parse_controlfile(path))
+    return pkgs
 
-    # Get dict matching source package to build deps
-    build_deps = {v.source: v.build_deps for _, v in pkgs.items()}
-    # Get dict matching binary package to source package
-    src_pkgs = {v.name: v.source for _, v in pkgs.items()}
+
+def graph(pkgs: Dict[str, BinaryPackage]) -> nx.DiGraph:
+    """Builds graph of build dependencies"""
+    build_deps = {}
+    src_pkgs = {}
+    directories = {}
+    for _, pkg in pkgs.items():
+        build_deps[pkg.source] = pkg.build_deps
+        src_pkgs[pkg.name] = pkg.source
+        directories[pkg.source] = pkg.dir
 
     # Convert binary build deps to source packages (if available locally)
-    for repo in build_deps:
+    for src, d in directories.items():
         src_deps = []
-        for dep in build_deps[repo]:
+        for dep in build_deps[src]:
             if dep in src_pkgs:
-                src_deps.append(src_pkgs[dep])
-        build_deps[repo] = src_deps
+                src_deps.append(directories[src_pkgs[dep]])
+        build_deps[src] = src_deps
 
     # Create graph from build deps
     dep_graph = nx.DiGraph()
-    for src, deps in build_deps.items():
-        dep_graph.add_node(src)
-        dep_graph.add_nodes_from(deps)
-        for dep in deps:
-            dep_graph.add_edge(src, dep)
+    for src, d in directories.items():
+        dep_graph.add_node(d)
+        dep_graph.add_nodes_from(build_deps[src])
+        for dep in build_deps[src]:
+            dep_graph.add_edge(d, dep)
 
     return dep_graph
 
@@ -137,7 +144,7 @@ def main() -> int:
         args.directories = [p for p in Path.cwd().iterdir() if p.is_dir()]
 
     # Get graph and print
-    dep_graph = graph(args.directories)
+    dep_graph = graph(parse_all_controlfiles(args.directories))
     if args.no_danglers:
         isolates = list(nx.isolates(dep_graph))
         dep_graph.remove_nodes_from(isolates)
