@@ -1,6 +1,6 @@
 """Generate build order graph from directory of debian packaging repositories"""
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 import argparse
 import logging
@@ -32,12 +32,13 @@ def parse_controlfile(path: Path) -> Dict[str, BinaryPackage]:
         for pg in deb822.Sources.iter_paragraphs(control):
             if "Source" in pg:
                 source = pg["Source"]
-                build_deps.extend(
-                    [
-                        re.sub(r" \([^\)]*\)", "", s.strip()).strip()
-                        for s in pg["Build-Depends"].split(",")
-                    ]
-                )
+                if "Build-Depends" in pg:
+                    build_deps.extend(
+                        [
+                            re.sub(r" \([^\)]*\)", "", s.strip()).strip()
+                            for s in pg["Build-Depends"].split(",")
+                        ]
+                    )
             elif "Package" in pg:
                 if source != "":
                     pkgs[pg["Package"]] = BinaryPackage(
