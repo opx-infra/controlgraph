@@ -15,7 +15,60 @@ From the available directories with valid Debian packaging, a graph with directo
 pip3 install controlgraph
 ```
 
-## Usage
+## Library Usage
+
+```python3
+import sys
+
+from pathlib import Path
+
+import controlgraph
+import networkx as nx
+
+# get all directories
+dirs = [p for p in Path.cwd().iterdir() if p.is_dir()]
+
+# get map of local binary packages to locally-available source build dependencies
+pkgs = controlgraph.parse_all_controlfiles(dirs)
+
+# generate build dependency graph from map
+dep_graph = controlgraph.graph(pkgs)
+
+# print full dot graph
+nx.nx_pydot.write_dot(dep_graph, sys.stdout)
+
+# print linear order from depth-first search
+print(" ".join(list(nx.dfs_postorder_nodes(dep_graph))))
+```
+
+Output
+
+```
+strict digraph  {
+"opx-nas-daemon";
+"opx-common-utils";
+"opx-cps";
+"opx-logging";
+"opx-nas-acl";
+"opx-sdi-sys";
+"opx-nas-daemon" -> "opx-common-utils";
+"opx-nas-daemon" -> "opx-cps";
+"opx-nas-daemon" -> "opx-logging";
+"opx-nas-daemon" -> "opx-nas-acl";
+"opx-common-utils" -> "opx-logging";
+"opx-cps" -> "opx-common-utils";
+"opx-cps" -> "opx-logging";
+"opx-nas-acl" -> "opx-common-utils";
+"opx-nas-acl" -> "opx-cps";
+"opx-nas-acl" -> "opx-logging";
+"opx-sdi-sys" -> "opx-common-utils";
+"opx-sdi-sys" -> "opx-logging";
+}
+
+opx-logging opx-common-utils opx-cps opx-nas-acl opx-nas-daemon opx-sdi-sys
+```
+
+## CLI Usage
 
 With one or more directories present, run `controlgraph`.
 
@@ -41,11 +94,4 @@ strict digraph  {
 "opx-nas-acl" -> "opx-common-utils";
 "opx-nas-acl" -> "opx-logging";
 }
-```
-
-Pair it with [`dbp`](https://github.com/opx-infra/dbp) for easy full builds.
-
-```bash
-$ dbp build $(controlgraph)
-$ controlgraph --graph --reverse | dbp build --parallel=8
 ```
